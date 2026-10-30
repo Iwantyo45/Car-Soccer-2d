@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Turbo Goal</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#07111f;color:white;font-family:Arial;display:flex;min-height:100vh;flex-direction:column;align-items:center;justify-content:center;overflow:hidden}
+#top,#help,#wrap{width:min(1100px,96vw)}#top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:10px;flex-wrap:wrap}h1{margin:0;font-size:clamp(22px,4vw,34px)}#score{font-size:clamp(22px,4vw,34px);font-weight:bold}
+#wrap{position:relative}canvas{display:block;width:100%;aspect-ratio:16/9;background:#147c4b;border:4px solid #dce8f1;border-radius:12px}
+#menu{position:absolute;inset:0;background:#06101ddd;border-radius:9px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:13px;text-align:center;padding:15px}#menu h2{font-size:clamp(32px,6vw,54px);margin:0}#menu p{margin:0;color:#cbd5e1}
+button,select{border:0;border-radius:8px;padding:12px 18px;font-size:15px;font-weight:bold;cursor:pointer}button{background:#22c55e;color:#062012}select{background:#e7eef5;color:#111827}#help{text-align:center;color:#b9c8d8;font-size:13px;line-height:1.6;margin-top:9px}
+</style>
+</head>
+<body>
+<div id="top"><h1>⚡ TURBO GOAL</h1><div id="score">BLUE 0 : 0 ORANGE</div></div>
+<div id="wrap">
+<canvas id="game" width="1100" height="619"></canvas>
+<div id="menu"><h2>TURBO GOAL</h2><p>Das 2D-Auto-Fussballspiel</p>
+<label for="mode">Spielmodus</label>
+<select id="mode"><option value="classic">Classic</option><option value="bigball">Big Ball</option><option value="speed">Super Speed</option><option value="two">2 Spieler lokal</option></select>
+<button id="start">SPIEL STARTEN</button><small>WASD / Pfeile · SHIFT / ENTER = Boost · P = Pause</small></div>
+</div>
+<div id="help">Spieler 1: WASD fahren · SHIFT Boost &nbsp; | &nbsp; Spieler 2: Pfeiltasten · ENTER Boost<br>Leertaste = Ball zurücksetzen · P = Pause · R = Neustart · ESC = Menü</div>
+<script>
+"use strict";
+(()=>{
+const canvas=document.getElementById("game"),ctx=canvas.getContext("2d"),menu=document.getElementById("menu"),modeInput=document.getElementById("mode"),scoreText=document.getElementById("score");
+const W=1100,H=619,L=45,R=W-45,T=45,B=H-45,GOAL=190,keys=Object.create(null);
+let mode="classic",running=false,paused=false,last=0,blue=0,orange=0,cars=[],ball=null,goalTimer=0;
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+function car(x,y,a,color,controls,bot){return{x,y,vx:0,vy:0,a,color,controls,bot,r:25,boost:100};}
+function reset(){
+ cars=[car(300,H/2,0,"#39a9ff",{up:"w",down:"s",left:"a",right:"d",boost:"shift"},false)];
+ cars.push(mode==="two"?car(W-300,H/2,Math.PI,"#ff9d35",{up:"arrowup",down:"arrowdown",left:"arrowleft",right:"arrowright",boost:"enter"},false):car(W-300,H/2,Math.PI,"#ff9d35",null,true));
+ ball={x:W/2,y:H/2,vx:0,vy:0,r:mode==="bigball"?31:20};
+}
+function resetMatch(){blue=0;orange=0;score();reset();}
+function score(){scoreText.textContent=`BLUE ${blue} : ${orange} ORANGE`;}
+function start(){mode=modeInput.value;resetMatch();running=true;paused=false;menu.style.display="none";}
+function input(c){
+ if(c.bot){let a=Math.atan2(ball.y-c.y,ball.x-c.x),d=Math.atan2(Math.sin(a-c.a),Math.cos(a-c.a));return{th:.9,turn:clamp(d*2.2,-1,1),boost:Math.abs(d)<.35&&c.boost>0};}
+ let k=c.controls;return{th:(keys[k.up]?1:0)-(keys[k.down]?.65:0),turn:(keys[k.right]?1:0)-(keys[k.left]?1:0),boost:!!keys[k.boost]};
+}
+function updateCar(c,dt){
+ let i=input(c),speed=Math.hypot(c.vx,c.vy);c.a+=i.turn*3.1*clamp(speed/110,.25,1)*dt;
+ let accel=mode==="speed"?560:390;if(i.boost&&c.boost>0){accel*=1.75;c.boost=Math.max(0,c.boost-38*dt);}else c.boost=Math.min(100,c.boost+17*dt);
+ c.vx+=Math.cos(c.a)*i.th*accel*dt;c.vy+=Math.sin(c.a)*i.th*accel*dt;
+ c.vx*=Math.pow(.986,dt*60);c.vy*=Math.pow(.986,dt*60);
+ let s=Math.hypot(c.vx,c.vy),max=mode==="speed"?570:440;if(s>max){c.vx=c.vx/s*max;c.vy=c.vy/s*max;}
+ c.x+=c.vx*dt;c.y+=c.vy*dt;
+ c.y=clamp(c.y,T+c.r,B-c.r);if(c.y===T+c.r&&c.vy<0)c.vy*=-.45;if(c.y===B-c.r&&c.vy>0)c.vy*=-.45;
+ c.x=clamp(c.x,L+c.r,R-c.r);if(c.x===L+c.r&&c.vx<0)c.vx*=-.45;if(c.x===R-c.r&&c.vx>0)c.vx*=-.45;
+}
+function hit(c){
+ let dx=ball.x-c.x,dy=ball.y-c.y,d=Math.hypot(dx,dy),min=ball.r+c.r;if(d<min&&d>.001){
+ let nx=dx/d,ny=dy/d,over=min-d;ball.x+=nx*over;ball.y+=ny*over;
+ let rel=(ball.vx-c.vx)*nx+(ball.vy-c.vy)*ny;
+ if(rel<0){let imp=-rel*1.45+110;ball.vx+=nx*imp+c.vx*.22;ball.vy+=ny*imp+c.vy*.22;}
+ else{ball.vx+=nx*75;ball.vy+=ny*75;}
+ }}
+function goal(team){if(team==="blue")blue++;else orange++;score();goalTimer=1;reset();}
+function updateBall(dt){
+ ball.vx*=Math.pow(.992,dt*60);ball.vy*=Math.pow(.992,dt*60);ball.x+=ball.vx*dt;ball.y+=ball.vy*dt;
+ let gt=H/2-GOAL/2,gb=H/2+GOAL/2;
+ if(ball.y-ball.r<T){ball.y=T+ball.r;ball.vy=Math.abs(ball.vy)*.82;}
+ if(ball.y+ball.r>B){ball.y=B-ball.r;ball.vy=-Math.abs(ball.vy)*.82;}
+ if(ball.x-ball.r<L){if(ball.y>gt&&ball.y<gb){if(ball.x<12)goal("orange");}else{ball.x=L+ball.r;ball.vx=Math.abs(ball.vx)*.82;}}
+ if(ball.x+ball.r>R){if(ball.y>gt&&ball.y<gb){if(ball.x>W-12)goal("blue");}else{ball.x=R-ball.r;ball.vx=-Math.abs(ball.vx)*.82;}}
+ cars.forEach(hit);let s=Math.hypot(ball.vx,ball.vy),max=mode==="speed"?900:760;if(s>max){ball.vx=ball.vx/s*max;ball.vy=ball.vy/s*max;}
+}
+function field(){
+ ctx.fillStyle="#147c4b";ctx.fillRect(0,0,W,H);let sw=(R-L)/10;
+ for(let n=0;n<10;n++){ctx.fillStyle=n%2?"#137849":"#168451";ctx.fillRect(L+n*sw,T,sw,B-T);}
+ ctx.strokeStyle="#e7fff0";ctx.lineWidth=4;ctx.strokeRect(L,T,R-L,B-T);ctx.beginPath();ctx.moveTo(W/2,T);ctx.lineTo(W/2,B);ctx.stroke();ctx.beginPath();ctx.arc(W/2,H/2,90,0,Math.PI*2);ctx.stroke();
+ ctx.fillStyle="#0b4266";ctx.fillRect(0,H/2-GOAL/2,L,GOAL);ctx.fillStyle="#6e3b16";ctx.fillRect(R,H/2-GOAL/2,W-R,GOAL);
+ ctx.strokeStyle="white";ctx.lineWidth=3;ctx.strokeRect(0,H/2-GOAL/2,L,GOAL);ctx.strokeRect(R,H/2-GOAL/2,W-R,GOAL);
+}
+function drawCar(c){
+ ctx.save();ctx.translate(c.x,c.y);ctx.rotate(c.a);ctx.fillStyle="#0006";ctx.beginPath();ctx.ellipse(0,8,32,20,0,0,Math.PI*2);ctx.fill();
+ ctx.fillStyle=c.color;ctx.beginPath();ctx.roundRect(-27,-17,54,34,9);ctx.fill();ctx.fillStyle="#dff6ff";ctx.beginPath();ctx.roundRect(-7,-12,21,24,5);ctx.fill();
+ ctx.fillStyle="#111827";ctx.fillRect(-19,-20,12,5);ctx.fillRect(9,-20,12,5);ctx.fillRect(-19,15,12,5);ctx.fillRect(9,15,12,5);ctx.fillStyle="white";ctx.fillRect(19,-5,6,10);ctx.restore();
+ ctx.fillStyle="#06101d99";ctx.fillRect(c.x-28,c.y+34,56,6);ctx.fillStyle="#35e875";ctx.fillRect(c.x-28,c.y+34,56*c.boost/100,6);
+}
+function draw(){
+ field();cars.forEach(drawCar);ctx.save();ctx.shadowColor="#fff";ctx.shadowBlur=15;let g=ctx.createRadialGradient(ball.x-7,ball.y-8,2,ball.x,ball.y,ball.r);g.addColorStop(0,"white");g.addColorStop(1,"#cbd5e1");ctx.fillStyle=g;ctx.beginPath();ctx.arc(ball.x,ball.y,ball.r,0,Math.PI*2);ctx.fill();ctx.restore();
+ if(paused||goalTimer>0){ctx.fillStyle="#06101dbb";ctx.fillRect(0,0,W,H);ctx.fillStyle="white";ctx.font="bold 48px Arial";ctx.textAlign="center";ctx.fillText(paused?"PAUSE":"TOR!",W/2,H/2);}
+}
+function loop(t){let dt=Math.min((t-last)/1000||0,.033);last=t;if(running&&!paused){cars.forEach(c=>updateCar(c,dt));updateBall(dt);goalTimer=Math.max(0,goalTimer-dt);}draw();requestAnimationFrame(loop);}
+window.addEventListener("keydown",e=>{let k=e.key.toLowerCase();if(["arrowup","arrowdown","arrowleft","arrowright"," "].includes(k))e.preventDefault();keys[k]=true;if(k==="p"&&running)paused=!paused;if(k==="r"&&running)resetMatch();if(k===" "&&running){ball.x=W/2;ball.y=H/2;ball.vx=ball.vy=0;}if(k==="escape"&&running){running=false;menu.style.display="flex";}});
+window.addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
+window.addEventListener("blur",()=>Object.keys(keys).forEach(k=>keys[k]=false));
+document.getElementById("start").addEventListener("click",start);
+reset();draw();requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
